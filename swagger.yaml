@@ -1,0 +1,45 @@
+openapi: 3.0.3
+info:
+  title: Coffee Traceability API
+  version: 1.0.0
+  description: >
+    REST API for the Blockchain-Based Coffee Supply Chain Traceability
+    System. All authenticated routes require a Bearer access token
+    obtained from POST /auth/login.
+servers:
+  - url: /api/v1
+tags:
+  - name: Auth
+  - name: Batches
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      responses:
+        "201": { description: User created }
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in and receive access + refresh tokens
+      responses:
+        "200": { description: Login successful }
+  /batches/verify/{token}:
+    get:
+      tags: [Batches]
+      summary: Public QR verification — full traceability history for a batch
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Batch traceability record }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+security:
+  - bearerAuth: []

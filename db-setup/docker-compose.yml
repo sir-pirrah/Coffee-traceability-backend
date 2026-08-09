@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: coffee-traceability-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: 13271sirPirrah
+      POSTGRES_DB: coffee_traceability
+    ports:
+      - "5432:5432"
+    volumes:
+      - coffee_traceability_data:/var/lib/postgresql/data
+      # Runs once, on first container creation only, before Prisma ever
+      # connects — enables the citext extension the schema depends on
+      # (User.email uses @db.Citext for case-insensitive uniqueness).
+      - ./init/00-extensions.sql:/docker-entrypoint-initdb.d/00-extensions.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d coffee_traceability"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Optional: a lightweight web UI for browsing the DB without leaving
+  # the browser, as an alternative/companion to `prisma studio`.
+  adminer:
+    image: adminer:latest
+    container_name: coffee-traceability-adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+
+volumes:
+  coffee_traceability_data:

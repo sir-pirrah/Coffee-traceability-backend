@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Vitest globals (describe/it/expect) plus the source path alias.
+    "types": ["node", "vitest/globals"],
+    // Vitest transforms test files as ESM, where the top-level await in
+    // setup.ts is legal. The base config targets CommonJS for the built
+    // server, so override the module system for typechecking only.
+    "module": "esnext",
+    "noEmit": true
+  },
+  // The base config excludes src/tests so they never land in dist/. This
+  // config exists purely so CI can typecheck them too.
+  "include": ["src/**/*.ts", "prisma/seed.ts"],
+  "exclude": ["node_modules", "dist"]
+}

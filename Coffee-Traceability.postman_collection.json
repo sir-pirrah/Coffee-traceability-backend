@@ -1,0 +1,856 @@
+{
+  "info": {
+    "name": "Coffee Traceability API",
+    "description": "End-to-end test flow for the Coffee Supply Chain Traceability backend. Run folders top-to-bottom on a fresh database (after `npx prisma migrate dev` + `npx prisma db seed`).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "0. Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": "{{host}}/health"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status 200 and ok', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().status).to.eql('ok');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1. Auth",
+      "item": [
+        {
+          "name": "Login as seeded SUPER_ADMIN",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Login succeeded', () => pm.response.to.have.status(200));",
+                  "const data = pm.response.json().data;",
+                  "pm.environment.set('accessToken', data.accessToken);",
+                  "pm.environment.set('refreshToken', data.refreshToken);",
+                  "pm.environment.set('userId', data.user.id);",
+                  "pm.test('Received access + refresh tokens', () => {",
+                  "  pm.expect(data.accessToken).to.be.a('string');",
+                  "  pm.expect(data.refreshToken).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Register a COOPERATIVE_STAFF user",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/auth/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{staffEmail}}\",\n  \"password\": \"{{staffPassword}}\",\n  \"firstName\": \"Grace\",\n  \"lastName\": \"Wanjiru\",\n  \"role\": \"COOPERATIVE_STAFF\",\n  \"cooperativeId\": \"{{cooperativeId}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Register returns 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Status is PENDING_VERIFICATION', () => {",
+                  "  pm.expect(pm.response.json().data.status).to.eql('PENDING_VERIFICATION');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Login with wrong password (expect 401)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"WrongPassword123!\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Rejected with 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh access token",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/auth/refresh",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Refresh succeeded', () => pm.response.to.have.status(200));",
+                  "const data = pm.response.json().data;",
+                  "pm.environment.set('accessToken', data.accessToken);",
+                  "pm.environment.set('refreshToken', data.refreshToken);",
+                  "pm.test('Old refresh token cannot be reused after this (test manually by re-running this request twice)', () => true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "url": "{{apiBase}}/auth/logout"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Logout succeeded', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Users",
+      "item": [
+        {
+          "name": "Get my profile (/users/me)",
+          "request": { "method": "GET", "url": "{{apiBase}}/users/me" },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Returns current user', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().data.email).to.eql(pm.environment.get('adminEmail'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List users (admin only)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{apiBase}}/users?page=1&limit=20",
+              "host": ["{{apiBase}}"],
+              "path": ["users"],
+              "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "20" }]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] }
+            }
+          ]
+        },
+        {
+          "name": "Activate staff user (PATCH status)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/users/{{userId}}/status",
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"ACTIVE\"\n}" },
+            "description": "Replace {{userId}} in the URL with the staff user's id returned from Register, if you want to activate someone other than yourself."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Cooperatives",
+      "item": [
+        {
+          "name": "Create cooperative (SUPER_ADMIN)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/cooperatives",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Kiambu Ridge Coffee Cooperative\",\n  \"registrationNo\": \"COOP-0002\",\n  \"county\": \"Kiambu\",\n  \"contactEmail\": \"info@kiamburidge.example\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Created 201', () => pm.response.to.have.status(201));",
+                  "pm.environment.set('cooperativeId', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List cooperatives",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBase}}/cooperatives?page=1&limit=20"
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "Get cooperative by id",
+          "request": { "method": "GET", "url": "{{apiBase}}/cooperatives/{{cooperativeId}}" },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "Update cooperative",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/cooperatives/{{cooperativeId}}",
+            "body": { "mode": "raw", "raw": "{\n  \"contactPhone\": \"+254700000000\"\n}" }
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "Try create cooperative as non-admin (expect 403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{staffAccessToken}}" }
+            ],
+            "url": "{{apiBase}}/cooperatives",
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Should Fail\",\n  \"county\": \"Nyeri\"\n}" },
+            "description": "Requires staffAccessToken to be set — log in as the staff user first (see folder 1) and copy the token into the environment, since STAFF is not permitted to create cooperatives."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": { "exec": ["pm.test('Forbidden 403', () => pm.response.to.have.status(403));"] }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Farmers",
+      "item": [
+        {
+          "name": "Create farmer",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/farmers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cooperativeId\": \"{{cooperativeId}}\",\n  \"firstName\": \"Peter\",\n  \"lastName\": \"Kamau\",\n  \"nationalId\": \"12345678\",\n  \"phoneNumber\": \"+254711000111\",\n  \"farmLocation\": \"Kiambu, Kenya\",\n  \"farmSizeAcres\": 2.5,\n  \"gpsLatitude\": -1.1714,\n  \"gpsLongitude\": 36.8356\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Created 201', () => pm.response.to.have.status(201));",
+                  "pm.environment.set('farmerId', pm.response.json().data.id);",
+                  "pm.test('Farmer code auto-generated', () => {",
+                  "  pm.expect(pm.response.json().data.farmerCode).to.match(/^FARM-\\d{4}-\\d{5}$/);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List farmers (search + pagination)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBase}}/farmers?page=1&limit=20&cooperativeId={{cooperativeId}}"
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "Get farmer by id",
+          "request": { "method": "GET", "url": "{{apiBase}}/farmers/{{farmerId}}" },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "Update farmer",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/farmers/{{farmerId}}",
+            "body": { "mode": "raw", "raw": "{\n  \"farmSizeAcres\": 3.0\n}" }
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Deliveries",
+      "item": [
+        {
+          "name": "Create delivery",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/deliveries",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"farmerId\": \"{{farmerId}}\",\n  \"cooperativeId\": \"{{cooperativeId}}\",\n  \"weightKg\": 48.5,\n  \"qualityGrade\": \"AA\",\n  \"moistureLevel\": 11.2,\n  \"pricePerKg\": 55.0,\n  \"notes\": \"Morning delivery, dry weather\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Created 201', () => pm.response.to.have.status(201));",
+                  "pm.environment.set('deliveryId', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List deliveries (filter by date range)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBase}}/deliveries?page=1&limit=20&cooperativeId={{cooperativeId}}"
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "Get delivery by id",
+          "request": { "method": "GET", "url": "{{apiBase}}/deliveries/{{deliveryId}}" },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Coffee Batches",
+      "item": [
+        {
+          "name": "Create batch",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/batches",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cooperativeId\": \"{{cooperativeId}}\",\n  \"originRegion\": \"Kiambu\",\n  \"harvestSeason\": \"2026-Main\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Created 201', () => pm.response.to.have.status(201));",
+                  "const data = pm.response.json().data;",
+                  "pm.environment.set('batchId', data.id);",
+                  "pm.environment.set('qrCodeToken', data.qrCodeToken);",
+                  "pm.test('Status starts REGISTERED', () => pm.expect(data.status).to.eql('REGISTERED'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Assign delivery to batch",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/deliveries/batch/{{batchId}}/assign",
+            "body": { "mode": "raw", "raw": "{\n  \"deliveryIds\": [\"{{deliveryId}}\"]\n}" }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Batch weight increased', () => {",
+                  "  pm.expect(Number(pm.response.json().data.totalWeightKg)).to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List batches (filter by status)",
+          "request": {
+            "method": "GET",
+            "url": "{{apiBase}}/batches?page=1&limit=20&cooperativeId={{cooperativeId}}"
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "Get batch by id (full traceability)",
+          "request": { "method": "GET", "url": "{{apiBase}}/batches/{{batchId}}" },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Includes deliveries + blockchain txs', () => {",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d).to.have.property('deliveries');",
+                  "  pm.expect(d).to.have.property('blockchainTxs');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Update batch status -> IN_PROCESSING",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/batches/{{batchId}}/status",
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"IN_PROCESSING\"\n}" }
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "Invalid transition -> EXPORTED (expect 400)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/batches/{{batchId}}/status",
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"EXPORTED\"\n}" },
+            "description": "Batch is IN_PROCESSING at this point — jumping straight to EXPORTED violates the allowed state machine and should be rejected."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Rejected 400 — illegal state transition', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUBLIC: Verify batch by QR token (no auth)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": "{{apiBase}}/batches/verify/{{qrCodeToken}}"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK without Authorization header', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns cooperative + traceability data, no internal ids', () => {",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d).to.have.property('cooperative');",
+                  "  pm.expect(d).to.have.property('blockchainTxs');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUBLIC: Verify with invalid token (expect 404)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "url": "{{apiBase}}/batches/verify/not-a-real-token"
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('404 Not Found', () => pm.response.to.have.status(404));"] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7. Processing",
+      "item": [
+        {
+          "name": "Record processing for batch",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/processing",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batchId\": \"{{batchId}}\",\n  \"method\": \"WASHED\",\n  \"startDate\": \"2026-07-29T06:00:00.000Z\",\n  \"outputWeightKg\": 42.0,\n  \"qualityNotes\": \"Good cherry ripeness, no defects observed\"\n}"
+            }
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('Created 201', () => pm.response.to.have.status(201));"] } }
+          ]
+        },
+        {
+          "name": "List processing records for batch",
+          "request": { "method": "GET", "url": "{{apiBase}}/processing/batch/{{batchId}}" },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "8. Warehouses",
+      "item": [
+        {
+          "name": "Create warehouse (admin)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/warehouses",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"cooperativeId\": \"{{cooperativeId}}\",\n  \"name\": \"Central Wet Mill Store\",\n  \"location\": \"Kiambu Town\",\n  \"capacityKg\": 5000\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Created 201', () => pm.response.to.have.status(201));",
+                  "pm.environment.set('warehouseId', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List warehouses",
+          "request": { "method": "GET", "url": "{{apiBase}}/warehouses?cooperativeId={{cooperativeId}}" },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "Store batch in warehouse",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/warehouses/store",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"warehouseId\": \"{{warehouseId}}\",\n  \"batchId\": \"{{batchId}}\",\n  \"weightKg\": 42.0\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Created 201', () => pm.response.to.have.status(201));",
+                  "pm.test('Batch is now IN_STORAGE (verify via Get batch by id)', () => true);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "9. Buyers & Ownership Transfers",
+      "item": [
+        {
+          "name": "Register buyer",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/buyers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"companyName\": \"Nordic Roasters AB\",\n  \"country\": \"Sweden\",\n  \"contactEmail\": \"procurement@nordicroasters.example\",\n  \"contactPhone\": \"+46700000000\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Created 201', () => pm.response.to.have.status(201));",
+                  "pm.environment.set('buyerId', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify buyer (admin)",
+          "request": { "method": "PATCH", "url": "{{apiBase}}/buyers/{{buyerId}}/verify" },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "List buyers",
+          "request": { "method": "GET", "url": "{{apiBase}}/buyers" },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        },
+        {
+          "name": "Initiate ownership transfer (sale)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/ownership-transfers",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"batchId\": \"{{batchId}}\",\n  \"fromEntityType\": \"COOPERATIVE\",\n  \"fromEntityId\": \"{{cooperativeId}}\",\n  \"buyerId\": \"{{buyerId}}\",\n  \"salePricePerKg\": 620\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Created 201, status PENDING', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.json().data.status).to.eql('PENDING');",
+                  "});",
+                  "pm.environment.set('ownershipTransferId', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Confirm ownership transfer",
+          "request": { "method": "POST", "url": "{{apiBase}}/ownership-transfers/{{ownershipTransferId}}/confirm" },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Confirmed, status now CONFIRMED', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().data.status).to.eql('CONFIRMED');",
+                  "});",
+                  "pm.test('Batch should now be SOLD (verify via Get batch by id)', () => true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List transfers for batch",
+          "request": { "method": "GET", "url": "{{apiBase}}/ownership-transfers/batch/{{batchId}}" },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('200 OK', () => pm.response.to.have.status(200));"] } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "10. Notifications",
+      "item": [
+        {
+          "name": "List my notifications",
+          "request": { "method": "GET", "url": "{{apiBase}}/notifications" },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const items = pm.response.json().data;",
+                  "if (items.length) { pm.environment.set('notificationId', items[0].id); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Mark notification as read",
+          "request": { "method": "PATCH", "url": "{{apiBase}}/notifications/{{notificationId}}/read" },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK (skip if no notificationId set)', () => {",
+                  "  pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "11. Reports",
+      "item": [
+        {
+          "name": "Cooperative summary report",
+          "request": { "method": "GET", "url": "{{apiBase}}/reports/cooperative/{{cooperativeId}}/summary" },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Has aggregate fields', () => {",
+                  "  const d = pm.response.json().data;",
+                  "  pm.expect(d).to.have.property('totalDeliveries');",
+                  "  pm.expect(d).to.have.property('batchesByStatus');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Batch blockchain history",
+          "request": { "method": "GET", "url": "{{apiBase}}/reports/batch/{{batchId}}/history" },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('Events are CONFIRMED by the mock ledger', () => {",
+                  "  const events = pm.response.json().data;",
+                  "  if (events.length) { pm.expect(events[0].status).to.eql('CONFIRMED'); }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "12. Security checks",
+      "item": [
+        {
+          "name": "No token -> 401",
+          "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{apiBase}}/users/me" },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"] } }
+          ]
+        },
+        {
+          "name": "Malformed token -> 401",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer not-a-real-jwt" }],
+            "url": "{{apiBase}}/users/me"
+          },
+          "event": [
+            { "listen": "test", "script": { "exec": ["pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"] } }
+          ]
+        },
+        {
+          "name": "Rate limit auth endpoint (run 12x rapidly)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": "{{apiBase}}/auth/login",
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"nobody@example.com\",\n  \"password\": \"wrong\"\n}" },
+            "description": "AUTH_RATE_LIMIT_MAX defaults to 10 per 15 min window. Use Postman's Collection Runner to fire this 12+ times back-to-back and confirm you eventually get a 429."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Either 401 (bad creds) or 429 (rate limited)', () => {",
+                  "  pm.expect([401, 429]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

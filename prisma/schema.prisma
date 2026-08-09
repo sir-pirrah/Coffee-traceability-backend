@@ -1,0 +1,423 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [citext]
+}
+
+model User {
+  id String @id @default(uuid()) @db.Uuid
+
+  // Nullable because a farmer account is issued from a registration form that
+  // never collects an email — farmers sign in with their phone number or their
+  // printed farmer code instead. Postgres allows many NULLs under a unique
+  // index, so the constraint still holds for everyone who does have one.
+  email                 String?             @unique @db.Citext
+  phoneNumber           String?             @unique @map("phone_number")
+  passwordHash          String              @map("password_hash")
+  firstName             String              @map("first_name")
+  lastName              String              @map("last_name")
+  role                  UserRole
+  status                UserStatus          @default(PENDING_VERIFICATION)
+  cooperativeId         String?             @map("cooperative_id") @db.Uuid
+  lastLoginAt           DateTime?           @map("last_login_at")
+  failedLoginCount      Int                 @default(0) @map("failed_login_count")
+  lockedUntil           DateTime?           @map("locked_until")
+  refreshTokenHash      String?             @map("refresh_token_hash")
+  maintenanceAllowed    Boolean             @default(false) @map("maintenance_allowed")
+  isDeleted             Boolean             @default(false) @map("is_deleted")
+
+  // Credential lifecycle for accounts an administrator provisions on someone
+  // else's behalf. The password is handed over on paper, so it is temporary by
+  // construction: it expires if never claimed, and the holder must replace it
+  // before they can reach anything.
+  mustChangePassword         Boolean   @default(false) @map("must_change_password")
+  passwordChangedAt          DateTime? @map("password_changed_at")
+  temporaryPasswordExpiresAt DateTime? @map("temporary_password_expires_at")
+
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+  auditLogs             AuditLog[]
+  buyerProfile          Buyer?
+  farmerProfile         Farmer?
+  notifications         Notification[]
+  recordedTransfersFrom OwnershipTransfer[] @relation("TransferInitiatedBy")
+  processedBatches      ProcessingRecord[]  @relation("ProcessedBy")
+  cooperative           Cooperative?        @relation(fields: [cooperativeId], references: [id])
+
+  @@index([cooperativeId])
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+// Granted (role, permission) pairs. The full catalog of permission keys
+// lives in code (src/constants/permissions.ts); only the grants are
+// stored here so the matrix is editable by a SUPER_ADMIN at runtime.
+model RolePermission {
+  id         String   @id @default(uuid()) @db.Uuid
+  role       UserRole
+  permission String
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@unique([role, permission])
+  @@index([role])
+  @@map("role_permissions")
+}
+
+// Single-row table (id is always "singleton") holding global runtime
+// settings — currently the maintenance-mode switch and its message.
+model SystemSetting {
+  id                 String   @id @default("singleton")
+  maintenanceMode    Boolean  @default(false) @map("maintenance_mode")
+  maintenanceMessage String?  @map("maintenance_message")
+  updatedById        String?  @map("updated_by_id") @db.Uuid
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
+
+model Cooperative {
+  id             String        @id @default(uuid()) @db.Uuid
+  name           String
+  registrationNo String?       @unique @map("registration_no")
+  county         String
+  subCounty      String?       @map("sub_county")
+  contactEmail   String?       @map("contact_email")
+  contactPhone   String?       @map("contact_phone")
+  address        String?
+  isActive       Boolean       @default(true) @map("is_active")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+  batches        CoffeeBatch[]
+  deliveries     Delivery[]
+  farmers        Farmer[]
+  users          User[]
+  warehouses     Warehouse[]
+
+  @@index([county])
+  @@map("cooperatives")
+}
+
+model Farmer {
+  id            String      @id @default(uuid()) @db.Uuid
+  userId        String?     @unique @map("user_id") @db.Uuid
+  cooperativeId String      @map("cooperative_id") @db.Uuid
+  farmerCode    String      @unique @map("farmer_code")
+  firstName     String      @map("first_name")
+  lastName      String      @map("last_name")
+  nationalId    String?     @unique @map("national_id")
+  phoneNumber   String?     @map("phone_number")
+  farmLocation  String?     @map("farm_location")
+  farmSizeAcres Decimal?    @map("farm_size_acres") @db.Decimal(8, 2)
+  gpsLatitude   Decimal?    @map("gps_latitude") @db.Decimal(9, 6)
+  gpsLongitude  Decimal?    @map("gps_longitude") @db.Decimal(9, 6)
+  isActive      Boolean     @default(true) @map("is_active")
+  isDeleted     Boolean     @default(false) @map("is_deleted")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+  deliveries    Delivery[]
+  cooperative   Cooperative @relation(fields: [cooperativeId], references: [id], onDelete: Cascade)
+  user          User?       @relation(fields: [userId], references: [id])
+
+  @@index([cooperativeId])
+  @@index([farmerCode])
+  @@map("farmers")
+}
+
+model Delivery {
+  id            String       @id @default(uuid()) @db.Uuid
+  deliveryCode  String       @unique @map("delivery_code")
+  farmerId      String       @map("farmer_id") @db.Uuid
+  cooperativeId String       @map("cooperative_id") @db.Uuid
+  weightKg      Decimal      @map("weight_kg") @db.Decimal(10, 2)
+  qualityGrade  String?      @map("quality_grade")
+  moistureLevel Decimal?     @map("moisture_level") @db.Decimal(5, 2)
+  pricePerKg    Decimal?     @map("price_per_kg") @db.Decimal(10, 2)
+  deliveryDate  DateTime     @default(now()) @map("delivery_date")
+  notes         String?
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  batchId       String?      @map("batch_id") @db.Uuid
+  batch         CoffeeBatch? @relation(fields: [batchId], references: [id])
+  cooperative   Cooperative  @relation(fields: [cooperativeId], references: [id], onDelete: Cascade)
+  farmer        Farmer       @relation(fields: [farmerId], references: [id])
+
+  @@index([farmerId])
+  @@index([cooperativeId])
+  @@index([deliveryDate])
+  @@index([batchId])
+  @@map("deliveries")
+}
+
+model CoffeeBatch {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  batchCode          String                  @unique @map("batch_code")
+  cooperativeId      String                  @map("cooperative_id") @db.Uuid
+  status             BatchStatus             @default(REGISTERED)
+  totalWeightKg      Decimal                 @default(0) @map("total_weight_kg") @db.Decimal(12, 2)
+  originRegion       String?                 @map("origin_region")
+  harvestSeason      String?                 @map("harvest_season")
+  qrCodeToken        String                  @unique @map("qr_code_token")
+  currentOwnerId     String?                 @map("current_owner_id") @db.Uuid
+  isDeleted          Boolean                 @default(false) @map("is_deleted")
+  createdAt          DateTime                @default(now()) @map("created_at")
+  updatedAt          DateTime                @updatedAt @map("updated_at")
+  blockchainTxs      BlockchainTransaction[]
+  cooperative        Cooperative             @relation(fields: [cooperativeId], references: [id], onDelete: Cascade)
+  deliveries         Delivery[]
+  ownershipTransfers OwnershipTransfer[]
+  processingRecords  ProcessingRecord[]
+  qrVerifications    QrVerification[]
+  warehouseInventory WarehouseInventory[]
+
+  @@index([cooperativeId])
+  @@index([status])
+  @@index([qrCodeToken])
+  @@map("coffee_batches")
+}
+
+model ProcessingRecord {
+  id             String           @id @default(uuid()) @db.Uuid
+  batchId        String           @map("batch_id") @db.Uuid
+  method         ProcessingMethod
+  processedById  String?          @map("processed_by_id") @db.Uuid
+  startDate      DateTime         @map("start_date")
+  endDate        DateTime?        @map("end_date")
+  outputWeightKg Decimal?         @map("output_weight_kg") @db.Decimal(10, 2)
+  qualityNotes   String?          @map("quality_notes")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  batch          CoffeeBatch      @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  processedBy    User?            @relation("ProcessedBy", fields: [processedById], references: [id])
+
+  @@index([batchId])
+  @@map("processing_records")
+}
+
+model Warehouse {
+  id            String               @id @default(uuid()) @db.Uuid
+  cooperativeId String               @map("cooperative_id") @db.Uuid
+  name          String
+  location      String?
+  capacityKg    Decimal?             @map("capacity_kg") @db.Decimal(12, 2)
+  isActive      Boolean              @default(true) @map("is_active")
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+  inventory     WarehouseInventory[]
+  cooperative   Cooperative          @relation(fields: [cooperativeId], references: [id], onDelete: Cascade)
+
+  @@index([cooperativeId])
+  @@map("warehouses")
+}
+
+model WarehouseInventory {
+  id          String      @id @default(uuid()) @db.Uuid
+  warehouseId String      @map("warehouse_id") @db.Uuid
+  batchId     String      @map("batch_id") @db.Uuid
+  weightKg    Decimal     @map("weight_kg") @db.Decimal(12, 2)
+  storedAt    DateTime    @default(now()) @map("stored_at")
+  removedAt   DateTime?   @map("removed_at")
+  batch       CoffeeBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  warehouse   Warehouse   @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@index([warehouseId])
+  @@index([batchId])
+  @@map("warehouse_inventory")
+}
+
+model Buyer {
+  id                 String              @id @default(uuid()) @db.Uuid
+  userId             String?             @unique @map("user_id") @db.Uuid
+  companyName        String              @map("company_name")
+  country            String?
+  contactEmail       String?             @map("contact_email")
+  contactPhone       String?             @map("contact_phone")
+  isVerified         Boolean             @default(false) @map("is_verified")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  updatedAt          DateTime            @updatedAt @map("updated_at")
+  user               User?               @relation(fields: [userId], references: [id])
+  ownershipTransfers OwnershipTransfer[]
+
+  @@map("buyers")
+}
+
+model OwnershipTransfer {
+  id             String                  @id @default(uuid()) @db.Uuid
+  batchId        String                  @map("batch_id") @db.Uuid
+  fromEntityType String                  @map("from_entity_type")
+  fromEntityId   String                  @map("from_entity_id") @db.Uuid
+  buyerId        String?                 @map("buyer_id") @db.Uuid
+  initiatedById  String?                 @map("initiated_by_id") @db.Uuid
+  salePricePerKg Decimal?                @map("sale_price_per_kg") @db.Decimal(10, 2)
+  status         OwnershipTransferStatus @default(PENDING)
+  transferredAt  DateTime                @default(now()) @map("transferred_at")
+  createdAt      DateTime                @default(now()) @map("created_at")
+  updatedAt      DateTime                @updatedAt @map("updated_at")
+  batch          CoffeeBatch             @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  buyer          Buyer?                  @relation(fields: [buyerId], references: [id])
+  initiatedBy    User?                   @relation("TransferInitiatedBy", fields: [initiatedById], references: [id])
+
+  @@index([batchId])
+  @@index([buyerId])
+  @@map("ownership_transfers")
+}
+
+model BlockchainTransaction {
+  id           String              @id @default(uuid()) @db.Uuid
+  batchId      String              @map("batch_id") @db.Uuid
+  eventType    BlockchainEventType @map("event_type")
+  txHash       String?             @unique @map("tx_hash")
+  payloadHash  String              @map("payload_hash")
+  // Tamper-evident chain: each event links to the batch's previous event via
+  // `previousHash`, and `blockHash` = sha256(previousHash + payloadHash +
+  // eventType + batchId + submittedAt). Editing any past event breaks the
+  // hash of every event after it, which `verifyChain()` detects. A DB trigger
+  // (see migration) also forbids UPDATE/DELETE of these columns.
+  previousHash String?             @map("previous_hash")
+  blockHash    String              @default("") @map("block_hash")
+  payload      Json
+  status       BlockchainTxStatus  @default(PENDING)
+  errorMessage String?             @map("error_message")
+  submittedAt  DateTime            @default(now()) @map("submitted_at")
+  confirmedAt  DateTime?           @map("confirmed_at")
+  batch        CoffeeBatch         @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@index([batchId, submittedAt])
+  @@index([eventType])
+  @@index([status])
+  @@map("blockchain_transactions")
+}
+
+model QrVerification {
+  id         String      @id @default(uuid()) @db.Uuid
+  batchId    String      @map("batch_id") @db.Uuid
+  verifiedIp String?     @map("verified_ip")
+  verifiedAt DateTime    @default(now()) @map("verified_at")
+  userAgent  String?     @map("user_agent")
+  batch      CoffeeBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@index([batchId])
+  @@index([verifiedAt])
+  @@map("qr_verifications")
+}
+
+model Notification {
+  id        String              @id @default(uuid()) @db.Uuid
+  userId    String              @map("user_id") @db.Uuid
+  channel   NotificationChannel @default(IN_APP)
+  title     String
+  message   String
+  status    NotificationStatus  @default(PENDING)
+  readAt    DateTime?           @map("read_at")
+  createdAt DateTime            @default(now()) @map("created_at")
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id         String      @id @default(uuid()) @db.Uuid
+  userId     String?     @map("user_id") @db.Uuid
+  action     AuditAction
+  entityType String      @map("entity_type")
+  entityId   String?     @map("entity_id")
+  ipAddress  String?     @map("ip_address")
+  userAgent  String?     @map("user_agent")
+  metadata   Json?
+  createdAt  DateTime    @default(now()) @map("created_at")
+  user       User?       @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  COOPERATIVE_ADMIN
+  COOPERATIVE_STAFF
+  FARMER
+  BUYER
+  AUDITOR
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+  DEACTIVATED
+}
+
+enum BatchStatus {
+  REGISTERED
+  IN_PROCESSING
+  PROCESSED
+  IN_STORAGE
+  IN_TRANSIT
+  SOLD
+  EXPORTED
+  REJECTED
+}
+
+enum ProcessingMethod {
+  WASHED
+  NATURAL
+  HONEY
+  SEMI_WASHED
+}
+
+enum OwnershipTransferStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+}
+
+enum BlockchainTxStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+}
+
+enum BlockchainEventType {
+  BATCH_CREATED
+  OWNERSHIP_TRANSFERRED
+  PROCESSING_COMPLETED
+  WAREHOUSE_STORED
+  SALE_RECORDED
+  QUALITY_GRADED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGIN_FAILED
+  LOGOUT
+  EXPORT
+  VERIFY
+  MAINTENANCE_TOGGLE
+}
