@@ -7,20 +7,20 @@ built from the architecture in `Coffee_Traceability_Backend_Database_Guide.md`.
 
 | Module | Status |
 |---|---|
-| Auth (register/login/refresh/logout) | ✅ Full — bcrypt, JWT access+refresh, login lockout, token rotation |
-| Users | ✅ Full — profile, admin listing, status management |
-| Cooperatives | ✅ Full CRUD |
-| Farmers | ✅ Full CRUD, soft delete, auto-generated farmer codes |
-| Deliveries | ✅ Full — creation, listing, batch assignment |
-| Coffee Batches | ✅ Full — status state machine, QR token generation, blockchain hooks, **public QR verification endpoint** |
-| Processing | ✅ Functional — record creation, blockchain event |
-| Warehouses | ✅ Functional — storage, inventory tracking |
-| Buyers | ✅ Functional — registration, verification |
-| Ownership Transfers | ✅ Functional — initiate/confirm flow |
-| Blockchain layer | ✅ Abstraction implemented with a mock ledger (swap in Fabric/Ethereum later — see `src/blockchain/blockchain.service.ts`) |
-| Notifications | ✅ Basic — list, mark read (no email/SMS sender wired yet) |
-| Reports | ✅ Basic — cooperative summary, batch blockchain history |
-| Audit Logs | ✅ Automatic on every state-changing action |
+| Auth (register/login/refresh/logout) |  Full — bcrypt, JWT access+refresh, login lockout, token rotation |
+| Users |  Full — profile, admin listing, status management |
+| Cooperatives |  Full CRUD |
+| Farmers |  Full CRUD, soft delete, auto-generated farmer codes |
+| Deliveries |  Full — creation, listing, batch assignment |
+| Coffee Batches |  Full — status state machine, QR token generation, blockchain hooks, **public QR verification endpoint** |
+| Processing |  Functional — record creation, blockchain event |
+| Warehouses |  Functional — storage, inventory tracking |
+| Buyers |  Functional — registration, verification |
+| Ownership Transfers |  Functional — initiate/confirm flow |
+| Blockchain layer |  Abstraction implemented with a mock ledger (swap in Fabric/Ethereum later — see `src/blockchain/blockchain.service.ts`) |
+| Notifications |  Basic — list, mark read (no email/SMS sender wired yet) |
+| Reports |  Basic — cooperative summary, batch blockchain history |
+| Audit Logs |  Automatic on every state-changing action |
 
 Every module follows the same layered pattern from the guide:
 **routes → controller → service → Prisma (repository layer)**, with Zod
