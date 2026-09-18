@@ -11,6 +11,6 @@
   },
   // The base config excludes src/tests so they never land in dist/. This
   // config exists purely so CI can typecheck them too.
-  "include": ["src/**/*.ts", "prisma/seed.ts"],
+  "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
