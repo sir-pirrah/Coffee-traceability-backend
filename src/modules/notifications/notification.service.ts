@@ -1,4 +1,5 @@
 import { prisma } from "@/repositories/prisma.client";
+import { runAsSystem } from "@/repositories/dbContext";
 import { logger } from "@/config/logger";
 import { ROLES } from "@/constants/roles";
 import type { NotificationChannel, UserRole } from "@prisma/client";
@@ -38,15 +39,25 @@ export class NotificationService {
 
   /** Create a notification for a single user. */
   async create(input: CreateNotificationInput) {
-    return prisma.notification.create({
-      data: {
-        userId: input.userId,
-        title: input.title,
-        message: input.message,
-        channel: input.channel ?? "IN_APP",
-        status: "PENDING",
-      },
-    });
+    // Delivering to someone's inbox is inherently a write for *another* user:
+    // the admin announcement endpoint targets `input.userId`, and the internal
+    // callers notify farmers. The `notifications_own` policy's WITH CHECK only
+    // admits rows where `user_id = app_current_user_id()`, so these inserts are
+    // rejected with `42501` from a user identity. Authorization is already
+    // enforced upstream (the route is `users:manage`-gated; internal callers are
+    // trusted domain logic), so the insert itself runs as the system — the same
+    // reasoning as `fanOut`.
+    return runAsSystem(() =>
+      prisma.notification.create({
+        data: {
+          userId: input.userId,
+          title: input.title,
+          message: input.message,
+          channel: input.channel ?? "IN_APP",
+          status: "PENDING",
+        },
+      })
+    );
   }
 
   /** List a user's notifications, most recent first. */
@@ -98,12 +109,22 @@ export class NotificationService {
   /**
    * Fan a notification out to many users in one insert. Returns silently when
    * the recipient list is empty so callers don't need to guard.
+   *
+   * Runs as the system, not as the actor. The `notifications_own` policy checks
+   * `user_id = app_current_user_id()` on INSERT, so a fan-out — which by
+   * definition writes rows for *other* users — can never satisfy it from a user
+   * identity and was rejected with `42501` on every event, then quietly absorbed
+   * by `safely()`. Notifications reached no one. Fan-out is delivery plumbing
+   * that runs after the caller's transaction has committed, which is exactly the
+   * no-session case `runAsSystem` exists for.
    */
   private async fanOut(userIds: string[], title: string, message: string, channel: NotificationChannel = "IN_APP") {
     if (userIds.length === 0) return 0;
-    const { count } = await prisma.notification.createMany({
-      data: userIds.map((userId) => ({ userId, title, message, channel, status: "PENDING" as const })),
-    });
+    const { count } = await runAsSystem(() =>
+      prisma.notification.createMany({
+        data: userIds.map((userId) => ({ userId, title, message, channel, status: "PENDING" as const })),
+      })
+    );
     return count;
   }
 

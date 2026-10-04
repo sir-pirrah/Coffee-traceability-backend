@@ -1,111 +1,71 @@
 import { Router } from "express";
 import { protect } from "@/middleware/protect";
 import { requirePermission } from "@/middleware/authorize";
-import { assertOwnership } from "@/middleware/scopeHelpers";
-import { asyncHandler } from "@/utils/asyncHandler";
-import { sendSuccess } from "@/utils/apiResponse";
-import { ApiError } from "@/utils/ApiError";
-import { prisma } from "@/repositories/prisma.client";
-import { verifyChain } from "@/blockchain/blockchain.service";
-import { getBatchMovement } from "./report.service";
-import { getCooperativeDashboard } from "./dashboard.service";
+import { validate } from "@/middleware/validate";
+import { dateRangeQuerySchema, farmerStatementQuerySchema, summaryQuerySchema } from "./report.validator";
+import * as controller from "./report.controller";
 
 const router = Router();
 router.use(...protect);
 
-// Reports are cooperative-scoped: every batch-keyed report first confirms the
-// batch belongs to the caller's cooperative, so a report ID cannot be used to
-// read another cooperative's ledger or movement history.
-async function assertBatchInScope(req: Parameters<typeof assertOwnership>[0], batchId: string): Promise<void> {
-  const batch = await prisma.coffeeBatch.findFirst({
-    where: { id: batchId, isDeleted: false },
-    select: { cooperativeId: true },
-  });
-  if (!batch) throw ApiError.notFound("Coffee batch not found");
-  assertOwnership(req, batch);
-}
-
-// Cooperative-level summary: deliveries, weight, and batch status
-// breakdown — the backbone of Chapter 5's "Reports" objective.
+// Report #1 — Operations Summary: cooperative health check (Admin/Staff).
 router.get(
   "/cooperative/:cooperativeId/summary",
   requirePermission("reports:view"),
-  asyncHandler(async (req, res) => {
-    const { cooperativeId } = req.params;
-    // A cooperative user can only summarize their own cooperative.
-    assertOwnership(req, { cooperativeId });
-
-    const [deliveryAgg, batchStatusCounts, farmerCount] = await Promise.all([
-      prisma.delivery.aggregate({
-        where: { cooperativeId },
-        _sum: { weightKg: true },
-        _count: { _all: true },
-      }),
-      prisma.coffeeBatch.groupBy({
-        by: ["status"],
-        where: { cooperativeId, isDeleted: false },
-        _count: { _all: true },
-      }),
-      prisma.farmer.count({ where: { cooperativeId, isDeleted: false } }),
-    ]);
-
-    sendSuccess(res, {
-      totalDeliveries: deliveryAgg._count._all,
-      totalWeightKg: deliveryAgg._sum.weightKg ?? 0,
-      activeFarmers: farmerCount,
-      batchesByStatus: batchStatusCounts.map((b: (typeof batchStatusCounts)[number]) => ({ status: b.status, count: b._count._all })),
-    });
-  })
+  validate(summaryQuerySchema),
+  controller.summaryHandler
 );
 
-// Everything the cooperative dashboard renders, in one payload: KPI totals with
-// a 30-day trend, the monthly movement series, the grade split, a merged
-// activity feed, and ledger health. Same scope assertion as the summary — a
-// cooperative user can only read their own cooperative.
+// Cooperative dashboard payload (KPIs, trends, activity feed).
 router.get(
   "/cooperative/:cooperativeId/dashboard",
   requirePermission("reports:view"),
-  asyncHandler(async (req, res) => {
-    const { cooperativeId } = req.params;
-    assertOwnership(req, { cooperativeId });
-
-    const months = Number.parseInt(String(req.query.months ?? ""), 10);
-    const dashboard = await getCooperativeDashboard(cooperativeId, {
-      months: Number.isFinite(months) ? months : undefined,
-    });
-    sendSuccess(res, dashboard);
-  })
+  controller.dashboardHandler
 );
 
-// Full ledger for a batch, plus a live tamper-evidence check: `chainValid`
-// recomputes every block hash and confirms each links to its predecessor, so
-// the explorer can prove the history hasn't been altered.
+// Report #2 — Farmer Delivery Statement (Admin/Staff see all; a farmer sees only
+// their own rows). Farmers hold `deliveries:view`, not `reports:view`, so either
+// permission is accepted and the controller narrows a farmer server-side.
 router.get(
-  "/batch/:batchId/history",
-  requirePermission("blockchain:view"),
-  asyncHandler(async (req, res) => {
-    await assertBatchInScope(req, req.params.batchId);
-    const [events, chain] = await Promise.all([
-      prisma.blockchainTransaction.findMany({
-        where: { batchId: req.params.batchId },
-        orderBy: { submittedAt: "asc" },
-      }),
-      verifyChain(req.params.batchId),
-    ]);
-    sendSuccess(res, { events, chainValid: chain.valid, brokenAt: chain.brokenAt ?? null });
-  })
+  "/cooperative/:cooperativeId/farmer-statement",
+  requirePermission("reports:view", "deliveries:view"),
+  validate(farmerStatementQuerySchema),
+  controller.farmerStatementHandler
 );
 
-// Coffee movement report: traces a batch's journey from delivery through
-// processing, warehouse, and sale — the timeline required by Chapter 5.
+// Report #4 — Processing Yield (Staff/Admin).
 router.get(
-  "/batch/:batchId/movement",
+  "/cooperative/:cooperativeId/processing-yield",
   requirePermission("reports:view"),
-  asyncHandler(async (req, res) => {
-    await assertBatchInScope(req, req.params.batchId);
-    const movement = await getBatchMovement(req.params.batchId);
-    sendSuccess(res, movement);
-  })
+  validate(dateRangeQuerySchema),
+  controller.processingYieldHandler
 );
+
+// Report #5 — Warehouse Inventory Snapshot (Staff/Admin).
+router.get(
+  "/cooperative/:cooperativeId/warehouse-inventory",
+  requirePermission("reports:view"),
+  controller.warehouseInventoryHandler
+);
+
+// Report #6 — Sales & Transfer Ledger: Admin only, gated by the granular
+// `reports:financial` key (deliberately NOT a `:view` key, so AUDITOR's
+// auto-grant of every `:view` permission does not reach it).
+router.get(
+  "/cooperative/:cooperativeId/sales-ledger",
+  requirePermission("reports:financial"),
+  validate(dateRangeQuerySchema),
+  controller.salesLedgerHandler
+);
+
+// Report #3 — Batch Traceability Sheet (Admin/Staff/Auditor). JSON + PDF export.
+router.get("/batch/:batchId/traceability", requirePermission("reports:view"), controller.traceabilityHandler);
+router.get("/batch/:batchId/traceability.pdf", requirePermission("reports:view"), controller.traceabilityPdfHandler);
+
+// Full ledger for a batch, plus a live tamper-evidence check.
+router.get("/batch/:batchId/history", requirePermission("blockchain:view"), controller.historyHandler);
+
+// Coffee movement report: batch journey timeline.
+router.get("/batch/:batchId/movement", requirePermission("reports:view"), controller.movementHandler);
 
 export default router;

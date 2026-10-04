@@ -8,12 +8,10 @@ import { asyncHandler } from "@/utils/asyncHandler";
 import { sendSuccess } from "@/utils/apiResponse";
 import { ApiError } from "@/utils/ApiError";
 import { prisma, withTransaction } from "@/repositories/prisma.client";
-import { Prisma } from "@prisma/client";
-import { recordBlockchainEvent } from "@/blockchain/blockchain.service";
-import { transitionBatchStatus } from "@/modules/coffeeBatches/coffeeBatch.service";
 import { notificationService } from "@/modules/notifications/notification.service";
 import { recordAuditLog } from "@/modules/auditLogs/auditLog.service";
 import { STAFF_ROLES } from "@/constants/roles";
+import { confirmTransferInTx, recordTransferConfirmedEvents } from "./ownershipTransfer.service";
 
 const router = Router();
 router.use(...protect);
@@ -84,51 +82,26 @@ router.post(
     assertOwnership(req, transfer.batch);
     if (transfer.status !== "PENDING") throw ApiError.badRequest("Transfer already finalized");
 
-    const updated = await withTransaction(async (tx: Prisma.TransactionClient) => {
-      const confirmed = await tx.ownershipTransfer.update({
-        where: { id: transfer.id },
-        data: { status: "CONFIRMED" },
-      });
-      // Confirming a sale can only happen from IN_STORAGE or IN_TRANSIT — the
-      // state machine blocks a batch being sold straight out of REGISTERED.
-      await transitionBatchStatus(tx, transfer.batchId, "SOLD");
-      return confirmed;
-    });
+    // The DB half (confirm + flip to SOLD + auto-close storage) runs in one
+    // transaction; the ledger events run after it commits. Both halves are the
+    // shared helper the batch-group confirm-sale also calls, so a lot sale and a
+    // single sale finalize through identical logic.
+    const result = await withTransaction((tx) => confirmTransferInTx(tx, transfer.id));
+    await recordTransferConfirmedEvents(result);
+    await recordAuditLog({ req, action: "UPDATE", entityType: "OwnershipTransfer", entityId: result.updated.id });
 
-    // Chain the change of custody, then — when money changed hands — a
-    // distinct SALE_RECORDED event so the ledger distinguishes a transfer
-    // from a sale (both are required by the proposal).
-    await recordBlockchainEvent(transfer.batchId, "OWNERSHIP_TRANSFERRED", {
-      transferId: transfer.id,
-      buyerId: transfer.buyerId,
-      fromEntityType: transfer.fromEntityType,
-      transferredAt: new Date().toISOString(),
-    });
-
-    if (transfer.salePricePerKg != null) {
-      await recordBlockchainEvent(transfer.batchId, "SALE_RECORDED", {
-        transferId: transfer.id,
-        buyerId: transfer.buyerId,
-        salePricePerKg: transfer.salePricePerKg.toString(),
-        recordedAt: new Date().toISOString(),
-      });
-    }
-    await recordAuditLog({ req, action: "UPDATE", entityType: "OwnershipTransfer", entityId: updated.id });
-
-    // A confirmed sale is the terminal event staff, the initiator, and above
-    // all the contributing farmers are waiting on. The batch's SOLD transition
-    // happens inside the transaction above rather than through
-    // updateBatchStatus, so the sale message is emitted here.
+    // A confirmed sale is the terminal event staff, the initiator, and above all
+    // the contributing farmers are waiting on.
     await notificationService.notifyTransferConfirmed({
-      batchId: transfer.batchId,
-      cooperativeId: transfer.batch.cooperativeId,
-      batchCode: transfer.batch.batchCode,
-      buyerName: transfer.buyer?.companyName ?? "a buyer",
-      initiatedById: transfer.initiatedById,
+      batchId: result.updated.batchId,
+      cooperativeId: result.cooperativeId,
+      batchCode: result.batchCode,
+      buyerName: result.buyerName ?? "a buyer",
+      initiatedById: result.updated.initiatedById,
       actorId: req.user!.id,
     });
 
-    sendSuccess(res, updated);
+    sendSuccess(res, result.updated);
   })
 );
 

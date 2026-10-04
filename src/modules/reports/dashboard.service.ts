@@ -135,8 +135,31 @@ async function getMovementSeries(cooperativeId: string, months: number): Promise
   }));
 }
 
-/** Delivered weight per quality grade, largest first. */
-async function getGradeSplit(cooperativeId: string): Promise<GradeSlice[]> {
+/**
+ * Weight of every batch that has actually been sold, counted once per batch.
+ *
+ * A batch can carry more than one transfer row (a rejected attempt followed by a
+ * confirmed one, or a re-listing), so summing joined rows would double-count it.
+ * This deliberately reads the same basis as the movement chart's Sold series —
+ * batches with a CONFIRMED transfer — so the KPI and the chart can never tell
+ * two different stories. EXPORTED batches keep their confirmed transfer, so they
+ * stay in the total.
+ */
+async function getSoldWeightKg(cooperativeId: string): Promise<number> {
+  const rows = await prisma.$queryRaw<{ soldKg: number }[]>`
+    SELECT COALESCE(SUM(b.total_weight_kg), 0)::float AS "soldKg"
+    FROM coffee_batches b
+    WHERE b.cooperative_id = ${cooperativeId}::uuid
+      AND b.is_deleted = false
+      AND EXISTS (
+        SELECT 1 FROM ownership_transfers t
+        WHERE t.batch_id = b.id AND t.status = 'CONFIRMED'
+      )
+  `;
+  return toNumber(rows[0]?.soldKg ?? 0);
+}
+
+/** Delivered weight per quality grade, largest first. */async function getGradeSplit(cooperativeId: string): Promise<GradeSlice[]> {
   const rows = await prisma.delivery.groupBy({
     by: ["qualityGrade"],
     where: { cooperativeId },
@@ -310,7 +333,7 @@ export async function getCooperativeDashboard(
     totalBatches,
     receivedAgg,
     storageAgg,
-    soldAgg,
+    soldKg,
     farmersThisWindow,
     farmersLastWindow,
     batchesThisWindow,
@@ -332,10 +355,9 @@ export async function getCooperativeDashboard(
       where: { removedAt: null, batch: { cooperativeId, isDeleted: false } },
       _sum: { weightKg: true },
     }),
-    prisma.coffeeBatch.aggregate({
-      where: { cooperativeId, isDeleted: false, status: { in: ["SOLD", "EXPORTED"] } },
-      _sum: { totalWeightKg: true },
-    }),
+    // Both totals read the operational records rather than the batch status
+    // alone: storage is open inventory rows, sold is confirmed transfers.
+    getSoldWeightKg(cooperativeId),
     prisma.farmer.count({ where: { cooperativeId, isDeleted: false, createdAt: { gte: windowStart } } }),
     prisma.farmer.count({
       where: { cooperativeId, isDeleted: false, createdAt: { gte: baselineStart, lt: windowStart } },
@@ -374,7 +396,7 @@ export async function getCooperativeDashboard(
       totalBatches,
       receivedKg: toNumber(receivedAgg._sum.weightKg),
       inStorageKg: toNumber(storageAgg._sum.weightKg),
-      soldKg: toNumber(soldAgg._sum.totalWeightKg),
+      soldKg,
       trends: {
         farmers: percentChange(farmersThisWindow, farmersLastWindow),
         batches: percentChange(batchesThisWindow, batchesLastWindow),

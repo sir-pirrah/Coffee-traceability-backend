@@ -15,7 +15,7 @@ import { prisma } from "@/repositories/prisma.client";
  * transaction so the counter increments and the row insert commit together.
  */
 export async function nextEntityCode(
-  entity: "batch" | "delivery" | "farmer",
+  entity: "batch" | "delivery" | "farmer" | "group",
   prefix: string,
   padding: number,
   client: Prisma.TransactionClient | typeof prisma = prisma

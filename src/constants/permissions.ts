@@ -41,8 +41,19 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { key: "warehouse:view", label: "View warehouses", group: "Warehouse" },
   { key: "warehouse:create", label: "Register warehouses", group: "Warehouse" },
   { key: "warehouse:store", label: "Store batches", group: "Warehouse" },
+  { key: "warehouse:remove", label: "Check out stored batches", group: "Warehouse" },
+
+  // Batch grouping ("lots"). A lot is a logical bundle that references several
+  // batches for a single sale — the batches themselves stay intact, so this is
+  // its own resource rather than a batch action.
+  { key: "lots:view", label: "View lots", group: "Lots" },
+  { key: "lots:manage", label: "Create / sell lots", group: "Lots" },
 
   { key: "reports:view", label: "View reports", group: "Reports" },
+  // Deliberately NOT ":view"-suffixed. VIEW_ONLY (below) auto-grants every
+  // ":view" key to AUDITOR, but the Sales & Transfer Ledger is Admin-only, so
+  // this financial key must stay outside that filter.
+  { key: "reports:financial", label: "View financial / sales reports", group: "Reports" },
   { key: "blockchain:view", label: "View blockchain / traceability", group: "Reports" },
 
   { key: "users:view", label: "View users", group: "Administration" },
@@ -83,8 +94,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, string[]> = {
     "deliveries:view", "deliveries:create",
     "batches:view", "batches:create", "batches:transition",
     "processing:view", "processing:create",
-    "warehouse:view", "warehouse:create", "warehouse:store",
-    "reports:view", "blockchain:view",
+    "warehouse:view", "warehouse:create", "warehouse:store", "warehouse:remove",
+    "lots:view", "lots:manage",
+    "reports:view", "reports:financial", "blockchain:view",
     "users:view", "users:manage",
     "roles:view",
     "settings:view", "settings:manage",
@@ -96,7 +108,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, string[]> = {
     "deliveries:view", "deliveries:create",
     "batches:view", "batches:create", "batches:transition",
     "processing:view", "processing:create",
-    "warehouse:view", "warehouse:store",
+    "warehouse:view", "warehouse:store", "warehouse:remove",
+    "lots:view", "lots:manage",
     "reports:view", "blockchain:view",
     "settings:view",
   ],

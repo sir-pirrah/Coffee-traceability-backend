@@ -44,6 +44,7 @@ model User {
   updatedAt             DateTime            @updatedAt @map("updated_at")
   auditLogs             AuditLog[]
   buyerProfile          Buyer?
+  createdGroups         BatchGroup[]        @relation("BatchGroupCreatedBy")
   farmerProfile         Farmer?
   notifications         Notification[]
   recordedTransfersFrom OwnershipTransfer[] @relation("TransferInitiatedBy")
@@ -94,6 +95,7 @@ model Cooperative {
   isActive       Boolean       @default(true) @map("is_active")
   createdAt      DateTime      @default(now()) @map("created_at")
   updatedAt      DateTime      @updatedAt @map("updated_at")
+  batchGroups    BatchGroup[]
   batches        CoffeeBatch[]
   deliveries     Delivery[]
   farmers        Farmer[]
@@ -171,6 +173,7 @@ model CoffeeBatch {
   blockchainTxs      BlockchainTransaction[]
   cooperative        Cooperative             @relation(fields: [cooperativeId], references: [id], onDelete: Cascade)
   deliveries         Delivery[]
+  groupMemberships   BatchGroupMember[]
   ownershipTransfers OwnershipTransfer[]
   processingRecords  ProcessingRecord[]
   qrVerifications    QrVerification[]
@@ -229,6 +232,42 @@ model WarehouseInventory {
   @@index([warehouseId])
   @@index([batchId])
   @@map("warehouse_inventory")
+}
+
+// A logical lot: several batches grouped so they can be sold or handled as a
+// unit, WITHOUT consuming the originals. Members keep their own identity,
+// status, and traceability — the group only references them. The combined
+// weight is derived on read (Σ member.totalWeightKg), never stored, so it can
+// never drift from the member batches.
+model BatchGroup {
+  id            String             @id @default(uuid()) @db.Uuid
+  groupCode     String             @unique @map("group_code")
+  cooperativeId String             @map("cooperative_id") @db.Uuid
+  note          String?
+  status        BatchGroupStatus   @default(OPEN)
+  createdById   String?            @map("created_by_id") @db.Uuid
+  createdAt     DateTime           @default(now()) @map("created_at")
+  updatedAt     DateTime           @updatedAt @map("updated_at")
+  cooperative   Cooperative        @relation(fields: [cooperativeId], references: [id], onDelete: Cascade)
+  createdBy     User?              @relation("BatchGroupCreatedBy", fields: [createdById], references: [id])
+  members       BatchGroupMember[]
+
+  @@index([cooperativeId])
+  @@map("batch_groups")
+}
+
+model BatchGroupMember {
+  id        String      @id @default(uuid()) @db.Uuid
+  groupId   String      @map("group_id") @db.Uuid
+  batchId   String      @map("batch_id") @db.Uuid
+  createdAt DateTime    @default(now()) @map("created_at")
+  batch     CoffeeBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  group     BatchGroup  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, batchId])
+  @@index([groupId])
+  @@index([batchId])
+  @@map("batch_group_members")
 }
 
 model Buyer {
@@ -380,6 +419,11 @@ enum OwnershipTransferStatus {
   PENDING
   CONFIRMED
   REJECTED
+}
+
+enum BatchGroupStatus {
+  OPEN
+  SOLD
 }
 
 enum BlockchainTxStatus {

@@ -161,10 +161,42 @@ export async function transitionBatchStatus(
   }
 
   await tx.coffeeBatch.update({ where: { id: batchId }, data: { status: newStatus } });
+
+  // Leaving storage means the coffee is no longer in a warehouse, so close any
+  // active inventory row in the same transaction. Every exit path (a confirmed
+  // sale, a move to transit, a rejection) funnels through here, which is what
+  // keeps "In Storage" from counting coffee that has already left — previously
+  // the row stayed open forever and the KPI never came down.
+  if (newStatus === "SOLD" || newStatus === "IN_TRANSIT" || newStatus === "REJECTED") {
+    await tx.warehouseInventory.updateMany({
+      where: { batchId, removedAt: null },
+      data: { removedAt: new Date() },
+    });
+  }
+
   return batch.status;
 }
 
 export async function updateBatchStatus(id: string, newStatus: BatchStatus, actorId?: string) {
+  // SOLD and IN_STORAGE are not free-standing labels — each is a claim that an
+  // operational record exists (a confirmed ownership transfer, a warehouse
+  // inventory row). Those records are what the movement chart, the dashboard
+  // KPIs, and the traceability report read, so setting the status on its own
+  // produced a batch that was "sold" but appeared nowhere. Both flows have real
+  // actions behind them now; this endpoint only handles the rest of the machine.
+  if (newStatus === "SOLD") {
+    throw ApiError.badRequest(
+      "A batch is marked sold by confirming an ownership transfer, not directly. " +
+        "Record the sale for this batch from its detail page and confirm it."
+    );
+  }
+  if (newStatus === "IN_STORAGE") {
+    throw ApiError.badRequest(
+      "A batch becomes stored by storing it in a warehouse, not by changing its status. " +
+        "Use Warehouse → Store Batch."
+    );
+  }
+
   const previousStatus = await withTransaction((tx) => transitionBatchStatus(tx, id, newStatus));
 
   const updated = await prisma.coffeeBatch.findUniqueOrThrow({ where: { id } });

@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import jwt, { JwtPayload, SignOptions } from "jsonwebtoken";
 import { env } from "@/config/env";
 import { Role } from "@/constants/roles";
@@ -21,7 +22,13 @@ export function signAccessToken(payload: Omit<AccessTokenPayload, "iat" | "exp">
 }
 
 export function signRefreshToken(userId: string): string {
-  return jwt.sign({ sub: userId }, env.JWT_REFRESH_SECRET, {
+  // `jti` makes every refresh token unique. Without it the payload is just
+  // `{ sub }` and `iat`/`exp` are whole seconds, so HS256 — being deterministic
+  // — hands back a byte-for-byte identical token for two mints in the same
+  // second. Rotation stores a hash of the new token to kill the old one; if the
+  // two collide (a login and a change-password landing in the same second) the
+  // "old" token keeps validating and the session is never actually revoked.
+  return jwt.sign({ sub: userId, jti: crypto.randomUUID() }, env.JWT_REFRESH_SECRET, {
     expiresIn: env.JWT_REFRESH_EXPIRES_IN,
   } as SignOptions);
 }

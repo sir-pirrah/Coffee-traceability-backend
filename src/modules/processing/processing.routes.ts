@@ -46,7 +46,7 @@ router.post(
     // A batch cannot be processed before it existed. Compared by calendar day
     // rather than by instant, because the form submits a date with no time —
     // an instant comparison would reject a run recorded on the same day the
-    // batch was registered, which is the normal case.
+    // batch was registered, which is the normal case.pp
     if (isBeforeDay(req.body.startDate, batch.createdAt)) {
       throw ApiError.badRequest(
         `Processing cannot start before batch ${batch.batchCode} was registered on ` +

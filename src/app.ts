@@ -16,20 +16,40 @@ import apiRoutes from "@/routes";
 export function createApp(): Express {
   const app = express();
 
-  // Trust the first proxy hop (Railway/Vercel) so req.ip and rate
+  // Trust the first proxy hop (Render/Vercel) so req.ip and rate
   // limiting reflect the real client IP rather than the proxy's.
   app.set("trust proxy", 1);
 
   // ---- Security headers ----
   app.use(helmet());
 
-  // ---- CORS allow-list (only the Angular frontend origin) ----
-  app.use(
-    cors({
-      origin: env.CORS_ORIGIN.split(",").map((o) => o.trim()),
-      credentials: true,
-    })
-  );
+  // ---- CORS allow-list ----
+  // Allowed origins come from CORS_ORIGIN (comma-separated), so dev,
+  // staging, and prod can each permit different frontends without a
+  // code change — e.g. "http://localhost:4200,https://coffee-traceability-frontend.vercel.app".
+  // Requests with no Origin header (curl, Postman, server-to-server calls,
+  // the public QR page fetched via some native app contexts) are let
+  // through, since there's no browser same-origin policy to enforce for
+  // them anyway. Anything with an Origin not on the list is rejected with
+  // a real Error, and logged, so a misconfigured origin is visible in
+  // your logs instead of failing mysteriously on the frontend.
+  const allowedOrigins = env.CORS_ORIGIN.split(",").map((o) => o.trim());
+
+  const corsOptions: cors.CorsOptions = {
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        logger.warn({ origin }, "Blocked by CORS: origin not in allow-list");
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  };
+
+  app.use(cors(corsOptions));
 
   app.use(compression());
   app.use(express.json({ limit: "1mb" }));

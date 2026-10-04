@@ -195,6 +195,61 @@ describeIfDb("batch lifecycle", () => {
     });
   });
 
+  describe("operational-record enforcement", () => {
+    // SOLD and IN_STORAGE are backed by real records — a confirmed ownership
+    // transfer and a warehouse inventory row. The status endpoint must refuse
+    // both so a batch can never read as sold or stored while the movement
+    // chart, the dashboard KPIs and the traceability report show nothing.
+    let processedId: string;
+
+    beforeAll(asSystem(async () => {
+      const created = await prisma.coffeeBatch.create({
+        data: {
+          batchCode: `TEST-GUARD-${Date.now().toString(36)}`,
+          qrCodeToken: `guard-token-${Date.now().toString(36)}`,
+          cooperativeId,
+          status: "PROCESSED",
+        },
+      });
+      processedId = created.id;
+    }));
+
+    afterAll(asSystem(async () => {
+      if (processedId) {
+        await prisma.coffeeBatch.updateMany({ where: { id: processedId }, data: { isDeleted: true } });
+      }
+    }));
+
+    it("refuses to mark a batch SOLD directly, pointing at the transfer flow", async () => {
+      // PROCESSED -> IN_STORAGE -> SOLD is legal in the state machine, so a 400
+      // here can only come from the guard; nothing else would reject it.
+      const res = await request(app)
+        .patch(`${API}/batches/${processedId}/status`)
+        .set(...authHeader(staff()))
+        .send({ status: "SOLD" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toMatch(/ownership transfer/i);
+    });
+
+    it("refuses to mark a batch IN_STORAGE directly, pointing at warehouse store", async () => {
+      // PROCESSED -> IN_STORAGE is the state machine's own edge; the guard is
+      // what rejects it.
+      const res = await request(app)
+        .patch(`${API}/batches/${processedId}/status`)
+        .set(...authHeader(staff()))
+        .send({ status: "IN_STORAGE" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toMatch(/warehouse/i);
+    });
+
+    it("leaves the batch where it was after both refusals", asSystem(async () => {
+      const batch = await prisma.coffeeBatch.findUniqueOrThrow({ where: { id: processedId } });
+      expect(batch.status).toBe("PROCESSED");
+    }));
+  });
+
   describe("cooperative data isolation", () => {
     const intruder = () => ({
       id: "22222222-2222-2222-2222-222222222222",
